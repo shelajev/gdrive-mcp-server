@@ -31,6 +31,16 @@ Read file contents directly using a Google Drive file ID.
   ```
 - **Output**: File contents with appropriate format conversion
 
+#### 3. `gdrive_set_oauth_token`
+Set the Google Drive OAuth token used for authenticating subsequent API calls.
+- **Input**:
+  ```json
+  {
+    "oauth_token": "string (Google OAuth access token)"
+  }
+  ```
+- **Output**: Confirmation message.
+
 ### Automatic File Format Handling
 
 The server intelligently handles different Google Workspace file types:
@@ -120,19 +130,19 @@ npm run build
 
 ### Authentication
 
-1. Create a credentials directory and place your OAuth keys:
-   ```bash
-   mkdir credentials
-   # Move your downloaded OAuth JSON file to the credentials directory as gcp-oauth.keys.json
-   ```
+This server requires a Google OAuth 2.0 access token with the `https://www.googleapis.com/auth/drive.readonly` scope to interact with the Google Drive API. Authentication can be configured in two ways:
 
-2. Run the authentication command:
-   ```bash
-   node dist/index.js auth
-   ```
+1.  **Environment Variable (Initial Authentication)**:
+    - Set the `MCP_GDRIVE_OAUTH_TOKEN` environment variable when starting the server.
+    - The server will use this token for initial authentication.
+    - Example: `MCP_GDRIVE_OAUTH_TOKEN="your-oauth-token" node dist/index.js`
 
-3. Complete the OAuth flow in your browser
-4. Credentials will be saved in `credentials/.gdrive-server-credentials.json`
+2.  **MCP Tool (`gdrive_set_oauth_token`)**: 
+    - Use the `gdrive_set_oauth_token` tool provided by this server to set or update the OAuth token dynamically at runtime.
+    - This method is useful if the token needs to be refreshed or provided by a client application after the server has started.
+    - The token set via this tool will override any token provided via the environment variable.
+
+**Note:** You still need to set up Google Cloud OAuth credentials (`credentials/gcp-oauth.keys.json`) as described in the "Detailed Google Cloud Setup" section, as these are required by the underlying Google API client library, even when providing the token directly.
 
 ## 🔧 Usage
 
@@ -155,7 +165,7 @@ Add this configuration to your app's server settings:
       "args": ["path/to/gdrive-mcp-server/dist/index.js"],
       "env": {
         "GOOGLE_APPLICATION_CREDENTIALS": "path/to/gdrive-mcp-server/credentials/gcp-oauth.keys.json",
-        "MCP_GDRIVE_CREDENTIALS": "path/to/gdrive-mcp-server/credentials/.gdrive-server-credentials.json"
+        "MCP_GDRIVE_OAUTH_TOKEN": "your-initial-oauth-token" // Optional: Provide initial token here
       }
     }
   }
@@ -180,10 +190,9 @@ Replace `path/to/gdrive-mcp-server` with the actual path to your installation di
 
 ## 🔒 Security
 
-- All sensitive credentials are stored in the `credentials` directory
-- OAuth credentials and tokens are excluded from version control
+- The OAuth client secret (`gcp-oauth.keys.json`) is stored locally.
+- The OAuth access token is handled in memory and can be provided via an environment variable or a secure MCP tool call. Avoid logging the token or exposing it unnecessarily.
 - Read-only access to Google Drive
-- Secure OAuth 2.0 authentication flow
 
 ## 🤝 Contributing
 

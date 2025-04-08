@@ -84,6 +84,7 @@ If you encounter errors:
 1. Verify the file ID is correct
 2. Ensure you have access to the file
 3. Check if the file format is supported
-4. Verify the server is properly configured
+4. Verify the server is properly authenticated.
+   - Check if a valid OAuth token was provided via the `MCP_GDRIVE_OAUTH_TOKEN` environment variable or the `gdrive_set_oauth_token` tool.
 
 Remember: Always use the tools in sequence - search first to get the file ID, then read_file to access the contents.

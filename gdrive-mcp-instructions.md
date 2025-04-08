@@ -55,6 +55,9 @@ To search for specific files:
 Use the Google Drive search tool to find files containing "[search-term]"
 ```
 
+### 4. Verify the authentication credentials are valid
+- Ensure a valid OAuth token has been provided either via the `MCP_GDRIVE_OAUTH_TOKEN` environment variable or the `gdrive_set_oauth_token` tool.
+
 ## Example Commands
 
 1. Read a specific Google Doc as markdown:

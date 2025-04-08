@@ -8,12 +8,24 @@ import {
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
+  ListResourcesRequest,
+  ReadResourceRequest,
+  CallToolRequest,
   ErrorCode,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
-import fs from "fs";
-import { google } from "googleapis";
-import path from "path";
+import { google, drive_v3 } from "googleapis";
+
+// Variable to hold the current OAuth token
+let currentAuthToken: string | null = null;
+
+// Helper function to update Google API authentication
+function updateGoogleAuth(token: string) {
+  currentAuthToken = token;
+  const auth = new google.auth.OAuth2();
+  auth.setCredentials({ access_token: token });
+  google.options({ auth });
+}
 
 const drive = google.drive("v3");
 
@@ -30,7 +42,7 @@ const server = new Server(
   },
 );
 
-server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
+server.setRequestHandler(ListResourcesRequestSchema, async (request: ListResourcesRequest) => {
   const pageSize = 10;
   const params: any = {
     pageSize,
@@ -45,7 +57,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
   const files = res.data.files!;
 
   return {
-    resources: files.map((file) => ({
+    resources: files.map((file: drive_v3.Schema$File) => ({
       uri: `gdrive:///${file.id}`,
       mimeType: file.mimeType,
       name: file.name,
@@ -112,7 +124,7 @@ async function readFileContent(fileId: string) {
   }
 }
 
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+server.setRequestHandler(ReadResourceRequestSchema, async (request: ReadResourceRequest) => {
   const fileId = request.params.uri.replace("gdrive:///", "");
   const result = await readFileContent(fileId);
   
@@ -158,14 +170,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["file_id"],
         },
       },
+      {
+        name: "gdrive_set_oauth_token",
+        description: "Set the Google Drive OAuth token for subsequent API calls",
+        inputSchema: {
+          type: "object",
+          properties: {
+            oauth_token: {
+              type: "string",
+              description: "The OAuth token",
+            },
+          },
+          required: ["oauth_token"],
+        },
+      },
     ],
   };
 });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
   if (request.params.name === "gdrive_search") {
     const userQuery = request.params.arguments?.query as string;
-    const escapedQuery = userQuery.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const escapedQuery = userQuery.replace(/\\/g, "\\").replace(/'/g, "\'");
     const formattedQuery = `fullText contains '${escapedQuery}'`;
     
     const res = await drive.files.list({
@@ -214,49 +240,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         isError: true,
       };
     }
+  } else if (request.params.name === "gdrive_set_oauth_token") {
+    const token = request.params.arguments?.oauth_token as string;
+    if (!token) {
+      throw new McpError(ErrorCode.InvalidParams, "OAuth token is required");
+    }
+
+    try {
+      updateGoogleAuth(token);
+      return {
+        content: [
+          {
+            type: "text",
+            text: "OAuth token set successfully.",
+          },
+        ],
+        isError: false,
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting OAuth token: ${error.message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   }
   throw new Error("Tool not found");
 });
 
-const credentialsPath = process.env.MCP_GDRIVE_CREDENTIALS || path.join(process.cwd(), "credentials", ".gdrive-server-credentials.json");
-
-async function authenticateAndSaveCredentials() {
-  const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "credentials", "gcp-oauth.keys.json");
-  
-  console.log("Looking for keys at:", keyPath);
-  console.log("Will save credentials to:", credentialsPath);
-  
-  const auth = await authenticate({
-    keyfilePath: keyPath,
-    scopes: ["https://www.googleapis.com/auth/drive.readonly"],
-  });
-  
-  fs.writeFileSync(credentialsPath, JSON.stringify(auth.credentials));
-  console.log("Credentials saved. You can now run the server.");
-}
-
 async function loadCredentialsAndRunServer() {
-  if (!fs.existsSync(credentialsPath)) {
-    console.error(
-      "Credentials not found. Please run with 'auth' argument first.",
+  const token = process.env.MCP_GDRIVE_OAUTH_TOKEN;
+  if (!token) {
+    console.warn(
+      "MCP_GDRIVE_OAUTH_TOKEN environment variable not set. Waiting for token via tool call.",
     );
-    process.exit(1);
+  } else {
+    console.log("Using OAuth token from MCP_GDRIVE_OAUTH_TOKEN environment variable.")
+    updateGoogleAuth(token); // Initialize with env var token if present
   }
-
-  const credentials = JSON.parse(fs.readFileSync(credentialsPath, "utf-8"));
-  const auth = new google.auth.OAuth2();
-  auth.setCredentials(credentials);
-  google.options({ auth });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
-if (process.argv[2] === "auth") {
-  authenticateAndSaveCredentials().catch(console.error);
-} else {
-  loadCredentialsAndRunServer().catch((error) => {
-    process.stderr.write(`Error: ${error}\n`);
-    process.exit(1);
-  });
-}
+loadCredentialsAndRunServer().catch((error) => {
+  process.stderr.write(`Error: ${error}\n`);
+  process.exit(1);
+});
