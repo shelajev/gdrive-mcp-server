@@ -11,7 +11,8 @@ Search for files in your Google Drive with powerful full-text search capabilitie
 - **Input**: 
   ```json
   {
-    "query": "string (your search query)"
+    "query": "string (your search query)",
+    "token": "string (Optional OAuth access token for this request)"
   }
   ```
 - **Output**: List of files with:
@@ -26,20 +27,11 @@ Read file contents directly using a Google Drive file ID.
 - **Input**:
   ```json
   {
-    "file_id": "string (Google Drive file ID)"
+    "file_id": "string (Google Drive file ID)",
+    "token": "string (Optional OAuth access token for this request)"
   }
   ```
 - **Output**: File contents with appropriate format conversion
-
-#### 3. `gdrive_set_oauth_token`
-Set the Google Drive OAuth token used for authenticating subsequent API calls.
-- **Input**:
-  ```json
-  {
-    "oauth_token": "string (Google OAuth access token)"
-  }
-  ```
-- **Output**: Confirmation message.
 
 ### Automatic File Format Handling
 
@@ -130,19 +122,23 @@ npm run build
 
 ### Authentication
 
-This server requires a Google OAuth 2.0 access token with the `https://www.googleapis.com/auth/drive.readonly` scope to interact with the Google Drive API. Authentication can be configured in two ways:
+This server requires a Google OAuth 2.0 access token with the `https://www.googleapis.com/auth/drive.readonly` scope to interact with the Google Drive API. Authentication can be configured in the following ways (in order of precedence):
 
-1.  **Environment Variable (Initial Authentication)**:
-    - Set the `MCP_GDRIVE_OAUTH_TOKEN` environment variable when starting the server.
-    - The server will use this token for initial authentication.
-    - Example: `MCP_GDRIVE_OAUTH_TOKEN="your-oauth-token" node dist/index.js`
+1.  **Token File (`/gdrive_current_token`)**: 
+    - The server monitors the file `/gdrive_current_token` within its running environment (e.g., Docker container).
+    - A third-party process can write the latest token information to this file.
+    - The file content can be either:
+        - **Plain text:** Just the access token string.
+        - **JSON:** A JSON object like `{"access_token": "YOUR_ACCESS_TOKEN", "refresh_token": "OPTIONAL_REFRESH_TOKEN"}`.
+    - The server reads this file on startup and watches it for changes. If the file is updated with a non-empty value, the server will use the new token(s), overriding any previous token.
+    - If the file is empty or doesn't exist initially, the server proceeds to check other methods.
 
-2.  **MCP Tool (`gdrive_set_oauth_token`)**: 
-    - Use the `gdrive_set_oauth_token` tool provided by this server to set or update the OAuth token dynamically at runtime.
-    - This method is useful if the token needs to be refreshed or provided by a client application after the server has started.
-    - The token set via this tool will override any token provided via the environment variable.
+2.  **Environment Variable (Initial Authentication)**:
+    - Set the `GOOGLE_CLIENT_ID` environment variable. This is **required** for the Google API client library to function correctly, even if providing tokens via other methods.
+    - Optionally, you can set the `MCP_GDRIVE_OAUTH_TOKEN` environment variable when starting the server. This token will be used *only* if the token file is not present or empty on startup.
+    - Example: `docker run ... -e GOOGLE_CLIENT_ID="your-client-id" -e MCP_GDRIVE_OAUTH_TOKEN="your-initial-oauth-token" ...`
 
-**Note:** You still need to set up Google Cloud OAuth credentials (`credentials/gcp-oauth.keys.json`) as described in the "Detailed Google Cloud Setup" section, as these are required by the underlying Google API client library, even when providing the token directly.
+**Note:** While multiple methods exist, the recommended approach for dynamic updates (e.g., in a containerized environment) is using the `/gdrive_current_token` file. Ensure the `GOOGLE_CLIENT_ID` environment variable is always set. The underlying Google API client library requires the OAuth client credentials (`gcp-oauth.keys.json` or just the Client ID via env var) for token management, even when the token itself is provided dynamically.
 
 ## 🔧 Usage
 
@@ -180,12 +176,24 @@ Replace `path/to/gdrive-mcp-server` with the actual path to your installation di
    ```typescript
    // Search for documents containing "quarterly report"
    const result = await gdrive_search({ query: "quarterly report" });
+
+   // Search using a specific token for this request
+   const resultWithToken = await gdrive_search({ 
+     query: "sensitive project data",
+     token: "specific-access-token-for-this-call"
+   });
    ```
 
 2. **Read file contents**:
    ```typescript
    // Read a specific file using its ID
    const contents = await gdrive_read_file({ file_id: "your-file-id" });
+
+   // Read using a specific token for this request
+   const contentsWithToken = await gdrive_read_file({ 
+     file_id: "another-file-id",
+     token: "specific-access-token-for-this-call"
+   });
    ```
 
 ## 🔒 Security
