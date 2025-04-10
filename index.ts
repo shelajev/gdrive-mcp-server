@@ -15,16 +15,61 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import { google, drive_v3 } from "googleapis";
+import { OAuth2Client } from 'google-auth-library';
 
 // Variable to hold the current OAuth token
 let currentAuthToken: string | null = null;
+// Global variable to hold the configured OAuth client
+let googleAuthClient: OAuth2Client | null = null; // Use OAuth2Client type consistently
 
-// Helper function to update Google API authentication
-function updateGoogleAuth(token: string) {
-  currentAuthToken = token;
-  const auth = new google.auth.OAuth2();
-  auth.setCredentials({ access_token: token });
-  google.options({ auth });
+// Function to initialize the client (call this once at startup using env vars as defaults)
+function initializeGoogleAuthClient() {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+
+
+  if (!clientId) {
+    console.warn("GOOGLE_CLIENT_ID environment variable not set. Cannot initialize OAuth client properly. API calls may fail.");
+    // Proceeding without client init, relying on token tool call, but it will likely fail 401
+    return;
+  }
+
+  // Initialize the OAuth2 client with credentials - only clientId is needed now
+  googleAuthClient = new google.auth.OAuth2(
+    clientId,
+    undefined, // No client secret needed
+    undefined // No redirect URI needed
+  );
+
+  // Set this client globally for googleapis to use
+  google.options({ auth: googleAuthClient });
+  console.log("Google OAuth client initialized with Client ID.");
+}
+
+// Function to update tokens on the pre-initialized client
+function updateTokensOnClient(accessToken: string, refreshToken?: string) {
+  if (!googleAuthClient) {
+    // This happens if GOOGLE_CLIENT_ID was missing at startup
+    console.error("OAuth client was not initialized (missing GOOGLE_CLIENT_ID in env vars?). Cannot set tokens.");
+    throw new Error("OAuth client is not configured. Ensure GOOGLE_CLIENT_ID env var is set.");
+  }
+
+  currentAuthToken = accessToken; // Keep track of current access token if needed
+
+  const credentials: { access_token: string; refresh_token?: string } = { access_token: accessToken };
+  if (refreshToken) {
+    credentials.refresh_token = refreshToken;
+  }
+
+  try {
+    // Set the credentials on the existing, configured client instance
+    googleAuthClient.setCredentials(credentials);
+    console.log(`Tokens set on the initialized OAuth client. Refresh token was ${refreshToken ? 'provided' : 'not provided'}.`);
+  } catch (error) {
+    console.error("Error setting credentials on OAuth client:", error);
+    // Re-throw or handle as appropriate, might indicate an issue with the tokens themselves
+    throw new Error(`Failed to set tokens on OAuth client: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  // No need to call google.options again, it uses the client instance set at initialization
 }
 
 const drive = google.drive("v3");
@@ -158,7 +203,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "gdrive_read_file",
-        description: "Read a file from Google Drive using its Google Drive file ID (don't use exa nor brave to read files)",
+        description: "Read a file from Google Drive using its Google Drive file ID",
         inputSchema: {
           type: "object",
           properties: {
@@ -168,20 +213,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ["file_id"],
-        },
-      },
-      {
-        name: "gdrive_set_oauth_token",
-        description: "Set the Google Drive OAuth token for subsequent API calls",
-        inputSchema: {
-          type: "object",
-          properties: {
-            oauth_token: {
-              type: "string",
-              description: "The OAuth token",
-            },
-          },
-          required: ["oauth_token"],
         },
       },
     ],
@@ -240,47 +271,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         isError: true,
       };
     }
-  } else if (request.params.name === "gdrive_set_oauth_token") {
-    const token = request.params.arguments?.oauth_token as string;
-    if (!token) {
-      throw new McpError(ErrorCode.InvalidParams, "OAuth token is required");
-    }
-
-    try {
-      updateGoogleAuth(token);
-      return {
-        content: [
-          {
-            type: "text",
-            text: "OAuth token set successfully.",
-          },
-        ],
-        isError: false,
-      };
-    } catch (error: any) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error setting OAuth token: ${error.message}`,
-          },
-        ],
-        isError: true,
-      };
-    }
   }
   throw new Error("Tool not found");
 });
 
 async function loadCredentialsAndRunServer() {
-  const token = process.env.MCP_GDRIVE_OAUTH_TOKEN;
-  if (!token) {
-    console.warn(
-      "MCP_GDRIVE_OAUTH_TOKEN environment variable not set. Waiting for token via tool call.",
-    );
+  initializeGoogleAuthClient(); // Initialize the client first using env vars (if available) as a default
+
+  // Don't attempt to set tokens from env vars here, as we need the full context (including refresh token)
+  // which is expected to come from the tool call.
+  if (!googleAuthClient) {
+    console.warn("Initial OAuth client could not be initialized from env vars (missing GOOGLE_CLIENT_ID?). Waiting for tokens via tool call, but API calls will fail until client is configured and tokens are set.");
   } else {
-    console.log("Using OAuth token from MCP_GDRIVE_OAUTH_TOKEN environment variable.")
-    updateGoogleAuth(token); // Initialize with env var token if present
+    console.log("OAuth client initialized from environment variables. Waiting for tokens via tool call.");
   }
 
   const transport = new StdioServerTransport();
